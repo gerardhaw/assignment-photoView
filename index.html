@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-EVSTQN3/azprG1Anm3QDgpJLIm9Nao0Yz1ztcQTwFspd3yD65VohhpuuCOmLASjC" crossorigin="anonymous">
+    <title>Photo Upload</title>
+</head>
+<body>
+    <h2>Photo Upload Simple App</h2>
+    <p id="username">No Sign In, you only can view public Image.</p>
+    <button id="signInbtn" class="btn btn-primary">Click Here to Sign In</button>
+
+    <div id="contentView" class="border border-dark p-4" style="display: none;">
+        <input type="file" id="fileInput" /><br>
+        <input type="checkbox" id="public" name="public" value="public-read">
+        <label for="public">Checked for public view</label><br>
+        <button id="uploadBtn" class="btn btn-primary">Upload</button>
+    </div>
+
+    <div class="position-fixed bottom-0 end-0 p-3" style="z-index: 11">
+        <div id="uploadmsg" class="toast hide bg-success" role="alert" aria-live="assertive" aria-atomic="true">
+            <div class="toast-header">
+            <strong class="me-auto">Upload Success</strong>
+            <button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="Close"></button>
+            </div>
+            <div class="toast-body">
+                Successfully Upload to S3.
+            </div>
+        </div>
+    </div>
+
+    <div class="position-fixed bottom-0 end-0 p-3" style="z-index: 11">
+        <div id="uploadfailmsg" class="toast hide bg-success" role="alert" aria-live="assertive" aria-atomic="true">
+            <div class="toast-header">
+            <strong class="me-auto">Upload Fail</strong>
+            <button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="Close"></button>
+            </div>
+            <div class="toast-body">
+                Fail to Upload to S3.
+            </div>
+        </div>
+    </div>
+
+    <div id="publicContainer" class="container border border-success p-3">
+        <div id="publicMsg" class="badge bg-success text-wrap mb-2">Public Gallery (Everyone Can View)</div>
+        <div id="publicRow" class="row align-items-start">
+        </div>
+    </div>
+
+    <div id="privateContainer" class="container border border-warning p-3">
+        <div id="privateMsg" class="badge bg-warning text-wrap mb-2">Private Gallery (Only Signed-In User can View)</div>
+        <div id="privateRow" class="row align-items-start">
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/js/bootstrap.bundle.min.js" integrity="sha384-MrcW6ZMFYlzcLA8Nl+NtUVF0sA7MsXsP1UyJoMp4YLEuNSfAP+JcXn/tWtIaxVXM" crossorigin="anonymous"></script>
+    <script src="./jquery.min.js"></script>
+
+    <script type="module">
+        import { jwtDecode } from "./jwtdecode.js";
+
+        let userInfo = "";
+
+        function decode(token){
+            let result = jwtDecode(token);
+            return result;
+        }
+
+        if(window.location.href.indexOf("#id_token") !== -1) {
+            var urlParams = new URLSearchParams(window.location.hash.substr(1)); // substr(1) to remove the `#`
+            if (urlParams.has('id_token')) {
+                // Store the token in local storage or cookie
+                localStorage.setItem('CognitoIdentityServiceProvider.6mri1rlaj5ln226skohqbtoi6n.idToken', urlParams.get('id_token'));
+                window.location.hash = ''; //Clear tokens from URL
+            }
+        }
+
+        const idToken = localStorage.getItem('CognitoIdentityServiceProvider.6mri1rlaj5ln226skohqbtoi6n.idToken');
+
+        if (idToken) {
+
+            userInfo = decode(idToken);
+
+            if(checkTokenValid(userInfo)){
+                // Change Info to sign-in user
+                document.querySelector('#username').innerHTML = "Welcome!"+userInfo.name+", you are signed in!";
+                document.querySelector('#signInbtn').setAttribute("style","display:none");
+                document.querySelector('#contentView').setAttribute("style","display:block");
+            }
+            else{
+                // Change Info to public user
+                document.querySelector('#username').innerHTML = "No Sign In, you only can view public Image.";
+                document.querySelector('#signInbtn').setAttribute("style","display:block");
+                document.querySelector('#contentView').setAttribute("style","display:none");
+            }
+        } else {
+            // Handle the case where the token is not available
+            // redirectToLogin();
+        }
+
+        function checkTokenValid(userInfo){
+
+            let expTime = userInfo.exp;
+            
+            if (expTime) {
+                const currentTime = Math.floor(Date.now() / 1000); // Current time in Unix timestamp
+                if (expTime < currentTime) {
+                    console.log('Token is expired');
+                    return false;
+                } else {
+                    console.log('Token is valid');
+                    return true;
+                }
+            } else {
+                console.log('Invalid token');
+                return false;
+            }
+        }
+
+        async function getPresignedUrl(fileName, fileType, publicView,userName,token) {
+
+            console.log("Token ", token);
+
+            try {
+                const response = await axios.post(
+                'https://66s2vddsb0.execute-api.ap-southeast-1.amazonaws.com/prod/getPresignedUrl',
+                { fileName, fileType, publicView, userName, token},
+                {
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                }
+                );
+
+                return response.data.presignedUrl;
+            } catch (error) {
+                console.error('Error fetching presigned URL:', error);
+            }
+        }
+        
+        async function uploadFile(file,publicV,userName) {
+            const publicView = publicV;
+            // Obtain the presigned URL from your Lambda function
+            const presignedUrl = await getPresignedUrl(file.name, file.type,publicView,userName,idToken);
+
+            try {
+                // Use the Fetch API to upload the file to the presigned URL
+                const response = await fetch(presignedUrl, {
+                method: 'PUT',
+                body: file, // The actual file to be uploaded
+                headers: {
+                    'Content-Type': file.type // Ensure the content type matches the file type
+                }
+                });
+
+                if (response.ok) {
+                    console.log('File uploaded successfully to S3');
+                    var myToastEl = document.getElementById('uploadmsg');
+                    var myToast = new bootstrap.Toast(myToastEl);
+                    myToast.show();
+
+                    setTimeout(generatePublicGallery,2000);
+                    setTimeout(generatePrivateGallery,2000);
+
+                } else {
+                    throw new Error('File upload failed');
+                    var myToastEl = document.getElementById('uploadfailmsg');
+                    var myToast = new bootstrap.Toast(myToastEl);
+                    myToast.show();
+                    
+                }
+            } catch (error) {
+                console.error('Error uploading file:', error);
+            }
+        }
+    
+        function handleUpload(){
+            
+            const fileInput = document.getElementById('fileInput');
+
+            const checkbox = document.getElementById('public');
+
+            let publicV = "private";
+
+            if (fileInput.files.length > 0) {
+                //Check if public view is checked
+                if(checkbox.checked){
+                    publicV = "public-read"
+                }
+                const file = fileInput.files[0];
+                uploadFile(file,publicV,userInfo.name);
+            } else {
+                console.log('No file selected');
+            }
+        }
+    
+        async function generatePublicGallery(){
+
+            let token = idToken;
+
+            let data = new Object();
+            if(token){
+                data.token = token;
+            }
+
+            let config = {
+                method: 'post',
+                maxBodyLength: Infinity,
+                url: 'https://66s2vddsb0.execute-api.ap-southeast-1.amazonaws.com/prod/getPhotoData',
+                headers: { 
+                    'Content-Type': 'application/json'
+                },
+                data : JSON.stringify(data)
+            };
+
+            axios.request(config)
+            .then(async(response) => {
+
+                let photoData = response.data;
+
+                let html = "";
+
+                for(let i=0;i<photoData.length;i++){
+
+                    if(photoData[i].FileName.includes("public-read")){
+
+                        let uploadUser = await getS3Metadata(photoData[i].FileName);
+
+                        html = html + '<div class="col">'+
+                        '<div class="card" style="width: 18rem;">'+
+                            '<img src="./'+photoData[i].FileName+'" class="card-img-top" alt="...">'+
+                            '<div class="card-body">'+
+                                '<p class="card-text">Uploaded by : '+uploadUser+'</p>'+
+                            '</div>'+
+                        '</div>'+
+                        '</div>'
+                    }
+
+                }
+
+                $('#publicRow').html(html);
+
+            })
+            .catch((error) => {
+                console.log(error);
+            });
+
+        }
+
+        async function generatePrivateGallery(){
+
+            let token = idToken;
+
+            let data = new Object();
+            if(token){
+                data.token = token;
+            }
+
+            let config = {
+                method: 'post',
+                maxBodyLength: Infinity,
+                url: 'https://66s2vddsb0.execute-api.ap-southeast-1.amazonaws.com/prod/getPhotoData',
+                headers: { 
+                    'Content-Type': 'application/json'
+                },
+                data : JSON.stringify(data)
+            };
+
+            axios.request(config)
+            .then(async (response) => {
+
+                let photoData = response.data;
+
+                let html = "";
+
+                for(let i=0;i<photoData.length;i++){
+
+                    if(photoData[i].FileName.includes("private")){
+
+                        let presignedUrl = await requestDownloadPreSignUrl(photoData[i].FileName);
+
+                        let uploadUser = await getS3Metadata(photoData[i].FileName);
+
+                        html = html + '<div class="col">'+
+                        '<div class="card" style="width: 18rem;">'+
+                            '<img src="'+presignedUrl+'" class="card-img-top" alt="...">'+
+                            '<div class="card-body">'+
+                                '<p class="card-text">Uploaded by : '+uploadUser+'</p>'+
+                            '</div>'+
+                        '</div>'+
+                        '</div>'
+                    }
+
+                }
+
+                $('#privateRow').html(html);
+
+            })
+            .catch((error) => {
+                console.log(error);
+            });
+
+        }
+
+        async function requestDownloadPreSignUrl(objKey){
+
+            return new Promise(async (resolve,reject)=>{
+
+                let token = idToken;
+
+                let data = new Object();
+                if(token){
+                    data.token = token;
+                    data.objKey = objKey;
+                }
+
+                let config = {
+                    method: 'post',
+                    maxBodyLength: Infinity,
+                    url: 'https://66s2vddsb0.execute-api.ap-southeast-1.amazonaws.com/prod/getDownloadPreSignedUrl',
+                    headers: { 
+                        'Content-Type': 'application/json'
+                    },
+                    data : JSON.stringify(data)
+                };
+
+                axios.request(config)
+                .then((response) => {
+                    console.log("PreSignURL Response : ",response.data.presignedUrl);
+                    resolve(response.data.presignedUrl);
+                })
+                .catch((error)=>{
+                    console.log(error);
+                    reject(error);
+                })
+
+            });
+
+        }
+
+        function getS3Metadata(objKey){
+
+            return new Promise(async (resolve,reject)=>{
+
+                let data = new Object();
+                data.objKey = objKey;
+                
+
+                let config = {
+                    method: 'post',
+                    maxBodyLength: Infinity,
+                    url: 'https://66s2vddsb0.execute-api.ap-southeast-1.amazonaws.com/prod/getS3ObjectMetadata',
+                    headers: { 
+                        'Content-Type': 'application/json'
+                    },
+                    data : JSON.stringify(data)
+                };
+
+                axios.request(config)
+                .then((response) => {
+                    console.log("s3 Response : ",response.data.Username);
+                    resolve(response.data.Username);
+                })
+                .catch((error)=>{
+                    console.log(error);
+                    reject(error);
+                })
+
+                });
+
+        }
+
+        function redirectToLogin() {
+            window.location.href = 'https://assignmentphoto.auth.ap-southeast-1.amazoncognito.com/login?response_type=token&client_id=6mri1rlaj5ln226skohqbtoi6n&redirect_uri=https://d33zxwduhpn4ol.cloudfront.net/';
+        }
+
+        document.getElementById("signInbtn").addEventListener("click", redirectToLogin);
+        document.getElementById("uploadBtn").addEventListener("click", handleUpload);  
+
+        generatePublicGallery();
+        generatePrivateGallery();
+    </script>
+    
+</body>
+</html>
