@@ -41,4 +41,4 @@ Make sure to update the configuration settings in your `index.html` and Lambda f
 
 ## Contact
 
-For more information or assistance with the deployment process, please contact [Your Contact Information].
+For more information or assistance with the deployment process, please contact me at gerardhaw98@gmail.com.
